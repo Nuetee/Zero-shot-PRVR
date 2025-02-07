@@ -75,38 +75,67 @@ for text_start in tqdm(range(0, total_queries, text_batch_size), desc="Text Batc
             total_vid_start = global_start_idx
             total_vid_end = global_start_idx + video_metadata[vid]["scene_segments"][-1][0]
             
-            # ✅ 비디오 전체 평균 유사도 계산 (벡터 연산)
+            # # ✅ 비디오 전체 평균 유사도 계산 (벡터 연산)
+            # video_similarities = similarity_vector[total_vid_start:total_vid_end]
+            # total_sum = torch.sum(video_similarities)
+            # total_frames = video_similarities.numel()
+
+            # for segment in segments:
+            #     local_start, local_end = segment
+            #     start_idx = global_start_idx + local_start
+            #     end_idx = global_start_idx + local_end
+
+            #     if end_idx > similarity_vector.shape[0]:
+            #         continue
+
+            #     # ✅ Segment 내부 유사도 평균 계산
+            #     segment_similarities = similarity_vector[start_idx:end_idx]
+            #     segment_sum = torch.sum(segment_similarities)
+            #     segment_frames = segment_similarities.numel()
+            #     segment_avg_similarity = segment_sum / segment_frames
+
+            #     # ✅ Segment 외부 유사도 평균 계산 (전체 평균 활용)
+            #     non_segment_frames = total_frames - segment_frames
+            #     if non_segment_frames > 0:
+            #         non_segment_avg_similarity = (total_sum - segment_sum) / non_segment_frames
+            #     else:
+            #         non_segment_avg_similarity = 0  # 예외 처리
+
+            #     # ✅ 최종 Segment Score = (Segment 내부 평균 - Segment 외부 평균)
+            #     segment_score = segment_avg_similarity - non_segment_avg_similarity
+
+            #     if segment_score > max_segment_score:
+            #         max_segment_score = segment_score
+
+
+            # ✅ 비디오 전체 평균 유사도 계산
             video_similarities = similarity_vector[total_vid_start:total_vid_end]
             total_sum = torch.sum(video_similarities)
             total_frames = video_similarities.numel()
+            total_avg_similarity = total_sum / total_frames
 
-            for segment in segments:
-                local_start, local_end = segment
-                start_idx = global_start_idx + local_start
-                end_idx = global_start_idx + local_end
+            # ✅ Segment별 평균 유사도 벡터 연산
+            segment_starts = global_start_idx + segments[:, 0]  # (num_segments,)
+            segment_ends = global_start_idx + segments[:, 1]  # (num_segments,)
 
-                if end_idx > similarity_vector.shape[0]:
-                    continue
+            # ✅ Segment 내부 유사도 평균 계산
+            segment_sums = torch.cumsum(video_similarities, dim=0)[segment_ends - 1] - torch.cat(
+                (torch.tensor([0], device=device), torch.cumsum(video_similarities, dim=0)[segment_starts - 1]))
+            segment_lengths = (segment_ends - segment_starts).float()
+            segment_avg_similarities = segment_sums / segment_lengths
 
-                # ✅ Segment 내부 유사도 평균 계산
-                segment_similarities = similarity_vector[start_idx:end_idx]
-                segment_sum = torch.sum(segment_similarities)
-                segment_frames = segment_similarities.numel()
-                segment_avg_similarity = segment_sum / segment_frames
+            # ✅ Segment 외부 유사도 평균 계산
+            non_segment_lengths = total_frames - segment_lengths
+            non_segment_sums = total_sum - segment_sums
+            non_segment_avg_similarities = torch.where(
+                non_segment_lengths > 0, non_segment_sums / non_segment_lengths, torch.tensor(0, device=device)
+            )
 
-                # ✅ Segment 외부 유사도 평균 계산 (전체 평균 활용)
-                non_segment_frames = total_frames - segment_frames
-                if non_segment_frames > 0:
-                    non_segment_avg_similarity = (total_sum - segment_sum) / non_segment_frames
-                else:
-                    non_segment_avg_similarity = 0  # 예외 처리
+            # ✅ 최종 Segment Score 계산
+            segment_scores = segment_avg_similarities - non_segment_avg_similarities
 
-                # ✅ 최종 Segment Score = (Segment 내부 평균 - Segment 외부 평균)
-                segment_score = segment_avg_similarity - non_segment_avg_similarity
-
-                if segment_score > max_segment_score:
-                    max_segment_score = segment_score
-
+            # ✅ 최적 segment 선택
+            max_segment_score = torch.max(segment_scores).item()
             best_video_scores[vid] = max_segment_score
 
         # ✅ 비디오 정렬 최적화 (heapq.nlargest)
