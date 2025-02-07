@@ -21,8 +21,8 @@ with open("text_metadata.json", "r") as f:
     text_metadata = json.load(f)
 
 # 비디오별 후보 구간 정보 저장 (vid -> [(start1, end1), (start2, end2), ...])
-# video_segments = {vid: meta["scene_segments"] for vid, meta in video_metadata.items()}
-video_segments = {vid: meta["proposals"] for vid, meta in video_metadata.items()}
+# video_segments = {vid: torch.tensor(meta["segments"], device=device) for vid, meta in video_metadata.items()}
+video_segments = {vid: torch.tensor(meta["proposals"], device=device) for vid, meta in video_metadata.items()}
 
 # 하이퍼파라미터 설정
 text_batch_size = 100    # 텍스트 미니배치 크기
