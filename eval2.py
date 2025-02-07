@@ -82,9 +82,9 @@ for text_start in tqdm(range(0, total_queries, text_batch_size), desc="Text Batc
             total_frames = video_similarities.numel()
             total_avg_similarity = total_sum / total_frames
 
-            # ✅ Segment별 평균 유사도 벡터 연산
-            segment_starts = global_start_idx + segments[:, 0]  # (num_segments,)
-            segment_ends = global_start_idx + segments[:, 1]  # (num_segments,)
+            # ✅ 전체 프레임 기준이 아니라, 해당 비디오의 상대적인 인덱스로 변환
+            segment_starts = segments[:, 0]  # 해당 비디오 내에서 시작점
+            segment_ends = segments[:, 1]  # 해당 비디오 내에서 끝점
 
             # ✅ Segment 내부 유사도 평균 계산
             segment_sums = cumsum_sim[segment_ends] - cumsum_sim[segment_starts]
