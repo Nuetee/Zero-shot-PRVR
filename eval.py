@@ -44,7 +44,7 @@ for text_start in tqdm(range(0, total_queries, text_batch_size), desc="Text Batc
     query_ids = list(text_metadata.keys())[text_start:text_end]
 
     # 유사도 행렬 저장 (현재 텍스트 배치에 대한 비디오 유사도)
-    similarity_matrix = torch.zeros((text_batch_size, video_features.shape[0]), device=device)
+    similarity_matrix = torch.zeros((text_batch.shape[0], video_features.shape[0]), device=device)
 
     # 비디오 프레임도 미니배치 단위로 읽으며 연산 (GPU 활용)
     for video_start in range(0, video_features.shape[0], video_batch_size):
