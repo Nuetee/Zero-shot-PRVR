@@ -3,23 +3,32 @@ import torch
 import json
 from tqdm import tqdm
 import torch.nn.functional as F
+import argparse
+import os
+
+# Argument Parsing
+parser = argparse.ArgumentParser(description="Evaluate text-video similarity.")
+parser.add_argument("--feature_path", type=str, required=True, help="Path to features .npy file")
+parser.add_argument("--metadata_path", type=str, required=True, help="Path to metadata .json file")
+args = parser.parse_args()
 
 # ✅ GPU 설정
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # ✅ 데이터 파일 로드
-text_features = torch.tensor(np.load("text_features.npy", mmap_mode="r"), dtype=torch.float32).to(device)
-video_features = torch.tensor(np.load("video_features.npy", mmap_mode="r"), dtype=torch.float32).to(device)
+text_features = torch.tensor(np.load(os.path.join(args.feature_path, "text_features.npy"), mmap_mode="r"), dtype=torch.float32).to(device)
+video_features = torch.tensor(np.load(os.path.join(args.feature_path, "video_features.npy"), mmap_mode="r"), dtype=torch.float32).to(device)
 
 # ✅ 비디오 및 텍스트 메타데이터 로드
-with open("video_metadata.json", "r") as f:
+with open(os.path.join(args.metadata_path, "video_metadata.json"), "r") as f:
     video_metadata = json.load(f)
-with open("text_metadata.json", "r") as f:
+with open(os.path.join(args.metadata_path, "text_metadata.json"), "r") as f:
     text_metadata = json.load(f)
 
 # ✅ 비디오별 후보 구간 정보 저장
-video_segments = {vid: torch.tensor(meta["scene_segments"], device=device) for vid, meta in video_metadata.items()}
+video_segments = {vid: torch.tensor(meta["scene_segments"][:-1], device=device) for vid, meta in video_metadata.items()}
+# video_segments = {vid: torch.tensor(meta["uniform_segments"], device=device) for vid, meta in video_metadata.items()}
 # video_segments = {vid: torch.tensor(meta["proposals"], device=device) for vid, meta in video_metadata.items()}
 
 # ✅ 하이퍼파라미터
@@ -69,7 +78,7 @@ for text_start in text_progress:
     for vid_idx, vid in enumerate(video_ids):
         if vid not in video_metadata:
             continue  # 메타데이터에 없는 비디오는 스킵
-
+        
         global_start_idx = video_metadata[vid]["start_index"]
         total_vid_start = global_start_idx
         total_vid_end = global_start_idx + video_metadata[vid]["scene_segments"][-1][0]
@@ -87,8 +96,26 @@ for text_start in text_progress:
         segment_ends = segments[:, 1].unsqueeze(0)  # (1, num_segments)
 
         # ✅ 모든 query에 대해 segment 내부 유사도 평균 계산
-        segment_sums = cumsum_sim[:, segment_ends] - cumsum_sim[:, segment_starts]
+        
+        # ✅ segment_starts와 segment_ends가 같은 경우 예외처리
+        zero_length_mask = (segment_ends == segment_starts)
+
+        # ✅ zero-length segment에서 segment_starts > 0인지 여부에 따라 다르게 처리
+        segment_sums_zero_length = torch.where(
+            segment_starts > 0,
+            cumsum_sim[:, segment_ends] - cumsum_sim[:, segment_starts - 1],  # segment_starts > 0
+            cumsum_sim[:, torch.clamp(segment_ends + 1, max=cumsum_sim.shape[1] - 1)] - cumsum_sim[:, segment_starts]  # segment_starts == 0
+        )
+
+        # ✅ 일반적인 segment_sums 계산 (zero-length 아닌 경우)
+        segment_sums_normal = cumsum_sim[:, segment_ends] - cumsum_sim[:, segment_starts]
+
+        # ✅ 최종 segment_sums 할당 (zero-length이면 예외 처리된 값 사용)
+        segment_sums = torch.where(zero_length_mask, segment_sums_zero_length, segment_sums_normal)
+
+        # ✅ segment_lengths에서 0 방지 (0이면 1로 설정)
         segment_lengths = (segment_ends - segment_starts).float()
+        segment_lengths = torch.where(zero_length_mask, torch.ones_like(segment_lengths), segment_lengths)
         segment_avg_similarities = segment_sums / segment_lengths
         
         # ✅ 최종 Segment Score 계산 (벡터 연산)
